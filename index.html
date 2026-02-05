@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GeoJSON Fixer untuk ArcGIS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .json-preview { font-family: 'Courier New', Courier, monospace; }
+    </style>
+</head>
+<body class="bg-slate-100 min-h-screen p-4 md:p-8">
+
+    <div class="max-w-4xl mx-auto bg-white rounded-xl shadow-lg overflow-hidden">
+        
+        <!-- Header -->
+        <div class="bg-blue-600 p-6 text-white">
+            <h1 class="text-2xl font-bold flex items-center gap-2">
+                <i class="fa-solid fa-map-location-dot"></i> GeoJSON Fixer
+            </h1>
+            <p class="text-blue-100 mt-1">Ubah format GeometryCollection (App Anda) menjadi FeatureCollection (ArcGIS Ready)</p>
+        </div>
+
+        <div class="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+            
+            <!-- Kolom Input -->
+            <div class="flex flex-col h-full">
+                <label class="font-semibold text-gray-700 mb-2 flex justify-between">
+                    <span>Data Mentah (Input)</span>
+                    <button onclick="loadSample()" class="text-xs text-blue-500 hover:underline">Isi Contoh Data</button>
+                </label>
+                <textarea id="inputJson" class="json-preview w-full h-64 md:h-96 p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-xs bg-gray-50 resize-none" placeholder="Paste kode JSON dari aplikasi Anda di sini..."></textarea>
+                <div class="mt-2 text-xs text-gray-500">
+                    <i class="fa-solid fa-circle-info"></i> Paste seluruh teks JSON yang Anda dapatkan dari export aplikasi Foodways.
+                </div>
+            </div>
+
+            <!-- Kolom Output -->
+            <div class="flex flex-col h-full relative">
+                <label class="font-semibold text-gray-700 mb-2">Hasil Perbaikan (ArcGIS Ready)</label>
+                
+                <!-- Overlay Belum Di-convert -->
+                <div id="placeholderOverlay" class="absolute inset-0 top-8 bg-gray-50/80 backdrop-blur-sm flex flex-col items-center justify-center border border-dashed border-gray-300 rounded-lg z-10 text-gray-400">
+                    <i class="fa-solid fa-arrow-left text-3xl mb-2 md:hidden"></i>
+                    <i class="fa-solid fa-arrow-right text-3xl mb-2 hidden md:block"></i>
+                    <p>Klik tombol Convert di bawah</p>
+                </div>
+
+                <textarea id="outputJson" readonly class="json-preview w-full h-64 md:h-96 p-4 border border-green-200 rounded-lg bg-green-50 text-xs resize-none focus:outline-none text-gray-700" placeholder="Hasil akan muncul di sini..."></textarea>
+            </div>
+        </div>
+
+        <!-- Action Bar -->
+        <div class="bg-gray-50 p-6 border-t border-gray-200 flex flex-col md:flex-row items-center justify-between gap-4">
+            
+            <button onclick="convertData()" class="w-full md:w-auto px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-md transition transform hover:scale-105 flex items-center justify-center gap-2">
+                <i class="fa-solid fa-wand-magic-sparkles"></i> Perbaiki untuk ArcGIS
+            </button>
+
+            <div class="flex gap-3 w-full md:w-auto">
+                <button id="btnCopy" onclick="copyToClipboard()" disabled class="flex-1 md:flex-none px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-white hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition">
+                    <i class="fa-regular fa-copy"></i> Copy
+                </button>
+                <button id="btnDownload" onclick="downloadFile()" disabled class="flex-1 md:flex-none px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center gap-2">
+                    <i class="fa-solid fa-download"></i> Download .geojson
+                </button>
+            </div>
+        </div>
+        
+        <!-- Link ArcGIS -->
+        <div class="bg-blue-50 p-4 text-center text-sm text-blue-800 border-t border-blue-100">
+            Setelah download, buka <a href="https://www.arcgis.com/home/webmap/viewer.html" target="_blank" class="font-bold underline hover:text-blue-600">ArcGIS Map Viewer</a> dan tarik (drag & drop) file .geojson ke peta.
+        </div>
+
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast" class="fixed bottom-5 right-5 bg-gray-800 text-white px-6 py-3 rounded shadow-lg transform translate-y-20 opacity-0 transition duration-300">
+        Pesan notifikasi
+    </div>
+
+    <script>
+        // Sample data from the user's case
+        const sampleData = {
+            "type": "Feature",
+            "properties": {
+                "name": "Youtiao (Chinese: 油条)",
+                "country": "China",
+                "origin": "Sanzi (Hanju)",
+                "type": "Migration"
+            },
+            "geometry": {
+                "type": "GeometryCollection",
+                "geometries": [
+                    { "type": "Point", "coordinates": [99.001998, 32.461391] },
+                    { "type": "LineString", "coordinates": [[109.900799, 35.51712], [99.001998, 32.461391]] },
+                    { "type": "Polygon", "coordinates": [[[106.52, 41.50], [113.62, 42.70], [106.52, 41.50]]] } // Simplified polygon for demo
+                ]
+            }
+        };
+
+        function loadSample() {
+            document.getElementById('inputJson').value = JSON.stringify(sampleData, null, 2);
+        }
+
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.innerText = message;
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            setTimeout(() => {
+                toast.classList.add('translate-y-20', 'opacity-0');
+            }, 3000);
+        }
+
+        function convertData() {
+            const inputStr = document.getElementById('inputJson').value;
+            
+            if (!inputStr.trim()) {
+                showToast("⚠️ Input kosong! Silakan paste data JSON dulu.");
+                return;
+            }
+
+            try {
+                const inputJson = JSON.parse(inputStr);
+                let features = [];
+
+                // LOGIC: Handle GeometryCollection wrapper issue
+                // Case 1: Root is a Feature with GeometryCollection (User's specific case)
+                if (inputJson.type === "Feature" && inputJson.geometry && inputJson.geometry.type === "GeometryCollection") {
+                    const baseProps = inputJson.properties || {};
+                    
+                    inputJson.geometry.geometries.forEach((geom, index) => {
+                        // Create distinct properties for each part so ArcGIS handles them nicely
+                        let typeSuffix = "";
+                        if (geom.type === "Point") typeSuffix = " - Point";
+                        if (geom.type === "LineString") typeSuffix = " - Path";
+                        if (geom.type === "Polygon") typeSuffix = " - Area";
+
+                        features.push({
+                            "type": "Feature",
+                            "properties": {
+                                ...baseProps,
+                                "geometry_type": geom.type // Add helper property
+                            },
+                            "geometry": geom
+                        });
+                    });
+                } 
+                // Case 2: Standard GeometryCollection at root
+                else if (inputJson.type === "GeometryCollection") {
+                    inputJson.geometries.forEach(geom => {
+                        features.push({
+                            "type": "Feature",
+                            "properties": {},
+                            "geometry": geom
+                        });
+                    });
+                }
+                // Case 3: Already correct (FeatureCollection) or simple Feature
+                else if (inputJson.type === "FeatureCollection") {
+                    features = inputJson.features;
+                    showToast("ℹ️ Data ini sepertinya sudah benar (FeatureCollection).");
+                } else if (inputJson.type === "Feature") {
+                    features = [inputJson];
+                } else {
+                    throw new Error("Format GeoJSON tidak dikenali atau tidak didukung.");
+                }
+
+                // Construct final output
+                const outputGeoJSON = {
+                    "type": "FeatureCollection",
+                    "features": features
+                };
+
+                // Update UI
+                document.getElementById('outputJson').value = JSON.stringify(outputGeoJSON, null, 2);
+                document.getElementById('placeholderOverlay').classList.add('hidden');
+                document.getElementById('btnCopy').disabled = false;
+                document.getElementById('btnDownload').disabled = false;
+                
+                showToast("✅ Berhasil diperbaiki! Siap download.");
+
+            } catch (e) {
+                console.error(e);
+                showToast("❌ Error: Format JSON tidak valid. Cek kembali text input.");
+            }
+        }
+
+        function copyToClipboard() {
+            const output = document.getElementById('outputJson');
+            output.select();
+            document.execCommand('copy');
+            showToast("📋 Disalin ke clipboard!");
+        }
+
+        function downloadFile() {
+            const text = document.getElementById('outputJson').value;
+            const filename = "arcgis_ready_data.geojson";
+            
+            const element = document.createElement('a');
+            element.setAttribute('href', 'data:text/json;charset=utf-8,' + encodeURIComponent(text));
+            element.setAttribute('download', filename);
+
+            element.style.display = 'none';
+            document.body.appendChild(element);
+            element.click();
+            document.body.removeChild(element);
+        }
+    </script>
+</body>
+</html>
