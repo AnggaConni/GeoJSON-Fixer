@@ -34,7 +34,7 @@
                 <div>
                     <h1 class="text-2xl font-bold flex items-center gap-2">
                         <i class="fa-solid fa-map-location-dot text-brand-gold"></i> <span id="appTitle">GeoJSON Fixer</span>
-                        <span class="text-xs bg-brand-navy text-brand-gold px-2 py-0.5 rounded-full font-bold ml-2 shadow-sm border border-brand-gold">SMART V2.0</span>
+                        <span class="text-xs bg-brand-navy text-brand-gold px-2 py-0.5 rounded-full font-bold ml-2 shadow-sm border border-brand-gold">SMART V2.2</span>
                     </h1>
                     <p class="text-red-100 mt-1 text-sm md:text-base" id="appSubtitle">Universal Converter: Any GeoJSON &rarr; ArcGIS Ready</p>
                 </div>
@@ -92,13 +92,13 @@
             <div class="bg-rose-100 p-4 border-t border-rose-200 flex flex-col md:flex-row justify-between items-center gap-2 text-sm text-brand-navy">
                 <span id="footerText">Buka ArcGIS Map Viewer & drag file ini.</span>
                 <div class="flex items-center gap-2 text-xs opacity-80 mt-2 md:mt-0">
-                    <span class="font-semibold text-brand-red">Developed by Angga Conni Saputra</span> <i class="fa-solid fa-code"></i>
+                    <span class="font-semibold text-brand-red">Developed by Independent Consultant</span> <i class="fa-solid fa-code"></i>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Modal Info & Toast (Same as before) -->
+    <!-- Modal Info & Toast -->
     <div id="ocrInfoModal" class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center p-4 backdrop-blur-sm">
         <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 relative border-t-4 border-brand-gold">
             <button onclick="document.getElementById('ocrInfoModal').classList.add('hidden')" class="absolute top-4 right-4 text-gray-400 hover:text-brand-red"><i class="fa-solid fa-xmark fa-xl"></i></button>
@@ -110,13 +110,63 @@
     <div id="toast" class="fixed bottom-5 right-5 bg-brand-navy text-white px-6 py-3 rounded shadow-lg transform translate-y-20 opacity-0 transition duration-300 z-50 border-l-4 border-brand-gold">msg</div>
 
     <script>
-        // --- SMART DETECTOR LOGIC ---
+        // --- SMART DETECTOR LOGIC V2.2 (Fix Raw Coordinates Support) ---
         
-        // Fungsi Rekursif: Bisa masuk ke dalam struktur data sedalam apapun
         function normalizeGeoJSON(input) {
             let features = [];
 
-            // 1. Jika Input adalah ARRAY (misal user paste list of objects)
+            if (!input || typeof input !== 'object') return [];
+
+            // Helper: Ambil type secara aman
+            const getType = (obj) => (obj && obj.type) ? obj.type.toLowerCase() : '';
+
+            // --- DETEKSI KOORDINAT MENTAH (RAW COORDINATES) ---
+            // Cek apakah ini Array Koordinat, bukan Array Features
+            if (Array.isArray(input) && input.length > 0) {
+                
+                // Depth 1: [lon, lat] -> Point
+                // Cek: element pertama adalah number
+                if (typeof input[0] === 'number' && input.length >= 2) {
+                    return [{
+                        type: "Feature",
+                        properties: { detected: "Raw Point from Coordinates" },
+                        geometry: { type: "Point", coordinates: input }
+                    }];
+                }
+
+                // Depth 2: [[lon, lat], [lon, lat]] -> LineString
+                // Cek: element pertama adalah array, dan dalamnya number
+                if (Array.isArray(input[0]) && typeof input[0][0] === 'number') {
+                    return [{
+                        type: "Feature",
+                        properties: { detected: "Raw LineString from Coordinates" },
+                        geometry: { type: "LineString", coordinates: input }
+                    }];
+                }
+
+                // Depth 3: [[[lon, lat], ...]] -> Polygon
+                // Cek: element pertama array, dalamnya array, dalamnya number
+                if (Array.isArray(input[0]) && Array.isArray(input[0][0]) && typeof input[0][0][0] === 'number') {
+                    return [{
+                        type: "Feature",
+                        properties: { detected: "Raw Polygon from Coordinates" },
+                        geometry: { type: "Polygon", coordinates: input }
+                    }];
+                }
+                
+                // Depth 4: MultiPolygon
+                if (Array.isArray(input[0]) && Array.isArray(input[0][0]) && Array.isArray(input[0][0][0]) && typeof input[0][0][0][0] === 'number') {
+                     return [{
+                        type: "Feature",
+                        properties: { detected: "Raw MultiPolygon from Coordinates" },
+                        geometry: { type: "MultiPolygon", coordinates: input }
+                    }];
+                }
+            }
+
+            // --- LOGIKA STANDAR (RECURSIVE) ---
+            
+            // 1. Jika Input adalah ARRAY (Features/Geometries)
             if (Array.isArray(input)) {
                 input.forEach(item => {
                     features = features.concat(normalizeGeoJSON(item));
@@ -124,8 +174,10 @@
                 return features;
             }
 
+            const type = getType(input);
+
             // 2. Jika Input adalah FeatureCollection
-            if (input.type === "FeatureCollection" && Array.isArray(input.features)) {
+            if (type === 'featurecollection' && Array.isArray(input.features)) {
                 input.features.forEach(feat => {
                     features = features.concat(normalizeGeoJSON(feat));
                 });
@@ -133,34 +185,30 @@
             }
 
             // 3. Jika Input adalah Feature Tunggal
-            if (input.type === "Feature") {
+            if (type === 'feature') {
                 const geom = input.geometry;
                 const props = input.properties || {};
 
-                // Cek apakah Geometrinya adalah GeometryCollection (KASUS UTAMA ANDA)
-                if (geom && geom.type === "GeometryCollection" && Array.isArray(geom.geometries)) {
+                // Cek apakah Geometrinya adalah GeometryCollection
+                if (geom && getType(geom) === 'geometrycollection' && Array.isArray(geom.geometries)) {
                     geom.geometries.forEach(subGeom => {
-                        // RECURSIVE FLATTENING:
-                        // Kita bikin feature baru untuk setiap pecahan geometri
-                        // Dan kita copy properties dari induknya
                         features.push({
                             type: "Feature",
                             properties: {
-                                ...props, // Copy semua properti (Nama, Negara, dll)
-                                geometry_type: subGeom.type // Tagging tipe
+                                ...props, 
+                                geometry_type: subGeom.type 
                             },
                             geometry: subGeom
                         });
                     });
                 } else if (geom) {
-                    // Jika Feature biasa (Point/Line biasa), loloskan saja tapi pastikan strukturnya rapi
                     features.push(input);
                 }
                 return features;
             }
 
-            // 4. Jika Input adalah GeometryCollection Telanjang (Tanpa Feature wrapper)
-            if (input.type === "GeometryCollection" && Array.isArray(input.geometries)) {
+            // 4. Jika Input adalah GeometryCollection Telanjang
+            if (type === 'geometrycollection' && Array.isArray(input.geometries)) {
                 input.geometries.forEach(subGeom => {
                     features.push({
                         type: "Feature",
@@ -171,8 +219,9 @@
                 return features;
             }
 
-            // 5. Jika Input adalah Geometry Telanjang (misal cuma {type: "Point", ...})
-            if (input.type === "Point" || input.type === "LineString" || input.type === "Polygon" || input.type === "MultiPolygon") {
+            // 5. Jika Input adalah Geometry Telanjang (Point, Polygon, dll)
+            const validGeoms = ['point', 'linestring', 'polygon', 'multipoint', 'multilinestring', 'multipolygon'];
+            if (validGeoms.includes(type)) {
                 features.push({
                     type: "Feature",
                     properties: {},
@@ -192,13 +241,17 @@
                 // Pre-clean: Fix common smart quotes copy-paste issues
                 let cleanStr = inputStr.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'");
                 
+                // Allow JS Object syntax (keys without quotes) strictly for robustness
+                // Note: JSON.parse requires quoted keys. If user pastes {x:1}, it fails.
+                // We assume valid JSON first.
                 const rawData = JSON.parse(cleanStr);
                 
                 // JALANKAN SMART DETECTOR
                 const cleanFeatures = normalizeGeoJSON(rawData);
 
                 if (cleanFeatures.length === 0) {
-                    throw new Error("No valid features found");
+                    console.error("Input parsed but no features found. Structure:", rawData);
+                    throw new Error("Struktur JSON valid, tapi tidak ada fitur peta yang dikenali.");
                 }
 
                 const outputGeoJSON = {
@@ -214,11 +267,13 @@
 
             } catch (e) {
                 console.error(e);
-                showToast("❌ Error: Format JSON tidak dikenali.");
+                let msg = "❌ Error: Format JSON tidak dikenali.";
+                if (e.message.includes("tidak ada fitur")) msg = "⚠️ " + e.message;
+                showToast(msg);
             }
         }
 
-        // --- UTILS (Toast, Copy, DL, Sample, Lang, OCR) ---
+        // --- UTILS ---
         function showToast(msg) {
             const t = document.getElementById('toast');
             t.innerText = msg; t.classList.remove('translate-y-20', 'opacity-0');
@@ -244,7 +299,6 @@
         }
         function showOcrInfo() { document.getElementById('ocrInfoModal').classList.remove('hidden'); }
         
-        // Translation & OCR (Simplified for brevity but fully functional based on prev code)
         let currentLang = 'id';
         const txt = {
             id: { t: "GeoJSON Fixer", s: "Universal Converter: Any GeoJSON → ArcGIS Ready", l1: "Data Mentah", l2: "ArcGIS Ready (Hasil)", b1: "Smart Convert" },
